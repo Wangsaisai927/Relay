@@ -28,7 +28,7 @@ The original PDF and waveform data were obtained from the Internet. They were no
 
 ![Event2 测量阻抗轨迹](assets/Event2_RX_trajectory.gif)
 
-动画默认展示录波时间 0.98～1.05 s，早于断路器开断。动画为放慢播放，不代表真实故障持续数秒；整个进入过程仍由实际采样值计算，未人为改变阻抗符号或捏造运动轨迹。
+动画默认展示录波时间 0.98～1.05 s，早于断路器开断。动画为放慢播放，不代表真实故障持续数秒；整个进入过程仍由实际采样值计算。
 
 ## 目录
 
@@ -149,7 +149,7 @@ $env:RELAY_FONT_PATH = 'C:\Windows\Fonts\simsun.ttc'
 export RELAY_FONT_PATH=/path/to/your/chinese-font.ttc
 ```
 
-仓库不捆绑系统字体。`--gif-only` 不需要字体，因为 GIF 完全不绘制文字。
+仓库不捆绑系统字体。`--gif-only` 不需要字体。
 
 ## 算法与整定
 
