@@ -2,20 +2,9 @@
 
 双击本目录下的 `dist/index.html` 即可离线使用，不需要安装 Python、启动服务器或连接网络。网页内已经包含两个事件的计算数据；完整源码、模板和重建工具随仓库提供。
 
-## GitHub Pages 发布
+## 随仓库提供
 
-仓库内已提供 `.github/workflows/pages.yml`，只发布 `web/dist/` 中的静态页面，不发布本地路径、托管凭据、`.git` 或 Sites 配置。无需服务器、数据库或付费服务，也不需要在 GitHub 配置个人访问令牌。
-
-首次发布：
-
-1. 将本仓库的最新文件上传或推送到 GitHub 的 `main` 分支，包括 `web/` 和 `.github/workflows/pages.yml`。
-2. 在仓库 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**。
-3. 在 **Actions → Deploy Relay demo to GitHub Pages → Run workflow** 手动运行一次。
-4. 等待工作流成功，打开部署任务给出的页面地址。按当前仓库名称，预期地址为 `https://wangsaisai927.github.io/Relay/`；只有部署成功后才可访问，不能把预期地址视为已经上线。
-
-以后推送 `web/` 内的更新会自动发布；保护算法改变后，先在本地重新导出网页数据，再提交新的 `web/dist/index.html`。工作流发布已生成的快照，不会偷偷使用不同定值重算数据。
-
-GitHub 官方说明：[使用自定义工作流部署 Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)。
+网站源码和已生成的独立网页随仓库一同提供，不配置在线托管或自动部署，也不提供在线演示入口。下载仓库后直接打开 `dist/index.html` 即可。保护算法改变后，可以按下方步骤重新导出网页数据。
 
 ## 重新生成与测试
 
@@ -64,7 +53,7 @@ Event2 的有效负序量支持反向闭锁，投入后六通道数据与原始�
 - `dist/index.html`：完整的独立网页，全部数据内嵌。
 - `page.html`：网页源模板。
 - `export_data.py`：自动调用仓库内三个核心程序中的继电器与仿真模块，重新生成独立网页。
-- `test_site.cjs`：前端脚本和数据一致性测试；发布工作流中会运行。
+- `test_site.cjs`：可在本地运行的前端脚本和数据一致性测试。
 
 本网页及导出脚本属于仓库代码，作者及使用风险声明见上一级 `NOTICE.md`。内嵌波形数据来源于第三方课程录波，不因此成为仓库作者的原创数据；公开发布前仍须核实原始材料及衍生演示数据的使用、再发布权限。
 

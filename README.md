@@ -18,14 +18,9 @@ The original PDF and waveform data were obtained from the Internet. They were no
 
 仓库现在包含当前六回路动态网站，可选 Event1/Event2，同步慢放保护投入前后的电流、电压和方向阻抗轨迹，支持暂停、重播、拖动时间及查看各回路独立计时。网页与当前 Python 算法使用同一组计算结果，不改变保护定值或动作结论。
 
-- 离线打开：双击 [`web/dist/index.html`](web/dist/index.html)，无需安装运行环境。
-- 源码及重建方法：[`web/README.md`](web/README.md)。
-- GitHub Pages 自动发布配置：[`.github/workflows/pages.yml`](.github/workflows/pages.yml)。
-- Pages 预期地址：[Wangsaisai927 / Relay 演示](https://wangsaisai927.github.io/Relay/)。此为部署目标，首次启用 Pages、上传文件并且工作流成功后才会上线；当前本地配置完成不等于已发布。
+网站文件随代码一同提供在 `web/` 文件夹中。下载仓库后，用浏览器打开 `web/dist/index.html` 即可本地使用，无需安装运行环境。源码、重建与测试方法见 `web/README.md`。本仓库仅提供网站文件，不提供在线演示入口。
 
-首次在仓库 Settings → Pages 中选择 GitHub Actions，再在 Actions 中运行 “Deploy Relay demo to GitHub Pages”。详细步骤及第三方数据说明见网页目录的 README。
-
-The interactive demo is included in `web/`. Open `web/dist/index.html` offline, or enable GitHub Pages with GitHub Actions and run the included deployment workflow. The URL above is the expected target, not a claim that deployment has already succeeded. The embedded event data remains third-party material; the repository's authorship and risk notices still apply.
+The interactive website files are included in `web/`. Download the repository and open `web/dist/index.html` locally in a browser. No online demo is provided. The embedded event data remains third-party material; the repository's authorship and risk notices still apply.
 
 ## 动态阻抗轨迹
 
@@ -54,13 +49,12 @@ The interactive demo is included in `web/`. Open `web/dist/index.html` offline, 
 ├── NOTICE.md                       # 中英文作者 风险及第三方材料声明
 ├── requirements.txt
 ├── .gitignore
-├── .github/workflows/pages.yml      # GitHub Pages 自动部署
 ├── web/
 │   ├── dist/index.html              # 可离线打开的完整动态演示
 │   ├── page.html                    # 网页模板
 │   ├── export_data.py               # 读取本仓库算法重新生成网页
 │   ├── test_site.cjs                # 网页脚本及数据一致性测试
-│   └── README.md                    # 使用、重建与发布说明
+│   └── README.md                    # 本地使用、重建与测试说明
 ├── inputs/
 │   ├── README.md                   # 第三方材料总说明
 │   ├── assignment/
@@ -77,7 +71,7 @@ The interactive demo is included in `web/`. Open `web/dist/index.html` offline, 
     └── simulation/
 ```
 
-三个核心 Python 程序不依赖 MATLAB、Node.js、办公软件或某台电脑的专有运行时。输入和默认输出路径均相对于程序目录，不要求从特定工作目录运行。`web/` 是额外的前端源码和演示；离线查看只需浏览器，Node.js 仅用于可选前端测试及 GitHub 发布前校验。
+三个核心 Python 程序不依赖 MATLAB、Node.js、办公软件或某台电脑的专有运行时。输入和默认输出路径均相对于程序目录，不要求从特定工作目录运行。`web/` 是额外的前端源码和演示；离线查看只需浏览器，Node.js 仅用于可选前端测试。
 
 上面的 PDF、CFG、DAT 文件名表示程序期望的材料位置。当前本地整理文件夹中保留了这些第三方原始材料；公开发布前须确认再发布权限，未确认时应从公开版本中移除，并由使用者在取得适当许可后自行放入。`assets/` 中保留了根据样例数据生成的演示图。
 
