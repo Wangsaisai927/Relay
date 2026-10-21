@@ -1,8 +1,8 @@
 # 三段数字式距离保护继电器
 
-EE271 课程项目的 Python 实现。读取两组 COMTRADE 录波，用一周波 DFT 估计基波相量，计算接地或相间测量阻抗，通过三段普通阻抗圆、延时和跳闸锁存逻辑完成保护回放，并加入理想断路器生成开断演示。
+EE271 课程项目的 Python 实现。读取两组 COMTRADE 录波，用一周波 DFT 估计基波相量，计算接地或相间测量阻抗，通过三段正方向 mho 圆、延时和跳闸锁存逻辑完成保护回放，并加入理想断路器生成开断演示。仅保留方向阻抗圆，不支持全阻抗圆。
 
-这是教学用离线录波回放，并非工程保护装置，也不是完整电网电磁暂态仿真。默认配置下，两组事件均由 I 段发出跳闸命令。
+这是教学用离线录波回放，并非工程保护装置，也不是完整电网电磁暂态仿真。两个事件均可完整运行：同一套算法并行计算六个回路、监督方向、判断三段动作并输出结果。Event1 由 AG 的 I 段发出命令；Event2 的有效负序量支持反向故障，执行反向闭锁。能运行不代表两组都应跳闸。
 
 ## 作者与使用声明 Author and Use Notice
 
@@ -14,11 +14,24 @@ The project code was written and is maintained by me, the author of this reposit
 
 The original PDF and waveform data were obtained from the Internet. They were not created by me and are not claimed as my original work. Copyright and other rights remain with their original authors or other rights holders. Public availability online does not imply permission for unrestricted use or redistribution. See the [full bilingual notice](NOTICE.md) and [third-party materials notice](inputs/README.md).
 
+## 交互式网页演示
+
+仓库现在包含当前六回路动态网站，可选 Event1/Event2，同步慢放保护投入前后的电流、电压和方向阻抗轨迹，支持暂停、重播、拖动时间及查看各回路独立计时。网页与当前 Python 算法使用同一组计算结果，不改变保护定值或动作结论。
+
+- 离线打开：双击 [`web/dist/index.html`](web/dist/index.html)，无需安装运行环境。
+- 源码及重建方法：[`web/README.md`](web/README.md)。
+- GitHub Pages 自动发布配置：[`.github/workflows/pages.yml`](.github/workflows/pages.yml)。
+- Pages 预期地址：[Wangsaisai927 / Relay 演示](https://wangsaisai927.github.io/Relay/)。此为部署目标，首次启用 Pages、上传文件并且工作流成功后才会上线；当前本地配置完成不等于已发布。
+
+首次在仓库 Settings → Pages 中选择 GitHub Actions，再在 Actions 中运行 “Deploy Relay demo to GitHub Pages”。详细步骤及第三方数据说明见网页目录的 README。
+
+The interactive demo is included in `web/`. Open `web/dist/index.html` offline, or enable GitHub Pages with GitHub Actions and run the included deployment workflow. The URL above is the expected target, not a claim that deployment has already succeeded. The embedded event data remains third-party material; the repository's authorship and risk notices still apply.
+
 ## 动态阻抗轨迹
 
-每个 GIF 只包含坐标轴、网格、三个动作圆、轨迹和移动测量点，不含标题、数字、图例或说明文字。
+每个 GIF 采用六宫格，依次为上排 AG、BG、CG，下排 AB、BC、CA；只包含坐标轴、网格、三个动作圆、黑色实际轨迹和移动测量点，不含标题、数字、图例或说明文字。另导出带回路名和坐标单位的 `EventN_RX_all_loops.png`，供报告使用。
 
-左图为全景，右图为局部放大；两个视图都保持 R、X 两轴等比例。横向为电阻 R，纵向为电抗 X，物理单位为 Ω。蓝、绿、灰圆分别对应 I、II、III 段，红线为累计轨迹，红点为当前测量值。三个圆固定不动，移动的是测量点。
+六图使用统一坐标范围，R、X 两轴等比例。横向为电阻 R，纵向为电抗 X，物理单位为 Ω。蓝、红、绿圆分别对应 I、II、III 段，黑线和黑点分别为实际累计轨迹及当前测量值。圆固定不动，六条测量轨迹各自计算，不拼接回路。圆尺寸仍按本题整定值计算，不照参考截图估数。
 
 ### Event1 AG 接地回路
 
@@ -41,6 +54,13 @@ The original PDF and waveform data were obtained from the Internet. They were no
 ├── NOTICE.md                       # 中英文作者 风险及第三方材料声明
 ├── requirements.txt
 ├── .gitignore
+├── .github/workflows/pages.yml      # GitHub Pages 自动部署
+├── web/
+│   ├── dist/index.html              # 可离线打开的完整动态演示
+│   ├── page.html                    # 网页模板
+│   ├── export_data.py               # 读取本仓库算法重新生成网页
+│   ├── test_site.cjs                # 网页脚本及数据一致性测试
+│   └── README.md                    # 使用、重建与发布说明
 ├── inputs/
 │   ├── README.md                   # 第三方材料总说明
 │   ├── assignment/
@@ -57,7 +77,7 @@ The original PDF and waveform data were obtained from the Internet. They were no
     └── simulation/
 ```
 
-仓库只使用上面三个 Python 程序，不依赖 MATLAB、Node.js、办公软件或某台电脑的专有运行时。输入和默认输出路径均相对于程序目录，不要求从特定工作目录运行。
+三个核心 Python 程序不依赖 MATLAB、Node.js、办公软件或某台电脑的专有运行时。输入和默认输出路径均相对于程序目录，不要求从特定工作目录运行。`web/` 是额外的前端源码和演示；离线查看只需浏览器，Node.js 仅用于可选前端测试及 GitHub 发布前校验。
 
 上面的 PDF、CFG、DAT 文件名表示程序期望的材料位置。当前本地整理文件夹中保留了这些第三方原始材料；公开发布前须确认再发布权限，未确认时应从公开版本中移除，并由使用者在取得适当许可后自行放入。`assets/` 中保留了根据样例数据生成的演示图。
 
@@ -122,7 +142,8 @@ python simulate_with_relay.py
 
 每个事件在 `outputs/simulation/` 生成：
 
-- `EventN_with_relay_data.xlsx`：包含“继电器投入后波形”和“原始录波”两个工作表。
+- `EventN_with_relay_data.xlsx`：包含投入后、原始波形及六回路，共八个工作表。
+- `EventN_RX_all_loops.png`：带回路名、坐标和单位的六宫格方向圆静态图。
 - `EventN_with_relay_waveforms.png`：三相电流、电源侧对地电压，以及跳闸和开断时刻。
 - `EventN_RX_trajectory.gif`：无文字的动态阻抗圆与轨迹。
 - `summary.json`：本次各事件的测量回路、定值半径、跳闸和开断时刻。
@@ -165,7 +186,7 @@ $$Z_{1,\mathrm{adj}}=3.4728+j73.6720\ \Omega$$
 
 ### 接地回路与相间回路
 
-Event1 默认使用 AG 回路，零序补偿将接地测量量修正到与正序阻抗整定对应的形式：
+Event1 的故障稳定段自动选择 AG 回路，零序补偿将接地测量量修正到与正序阻抗整定对应的形式：
 
 $$I_0=\frac{I_A+I_B+I_C}{3},\qquad K_0=\frac{Z_0-Z_1}{3Z_1}=0.753893-j0.261344$$
 
@@ -173,25 +194,41 @@ $$Z_{AG}=\frac{U_A}{I_A+K_0(I_A+I_B+I_C)}$$
 
 此处的补偿量是三相电流之和，即 $3I_0$，不要误把它换成 $I_0$ 而仍使用相同的 $K_0$。
 
-Event2 默认使用 BC 回路，不作接地零序补偿：
+Event2 的故障稳定段自动选择 BC 回路，不作接地零序补偿：
 
 $$Z_{BC}=\frac{U_B-U_C}{I_B-I_C}$$
 
-AG、BG、CG、AB、BC、CA 回路计算函数均保留；核心程序可用 `--loop` 手动指定，但本项目默认测试的是 AG 和 BC。按事件名称选回路不等于自动故障分类。
+AG、BG、CG、AB、BC、CA 六回路每个采样点全部计算。`RelayBank` 为每回路保存独立的 I/II/III 元件和 II/III 计时，共 18 元件；任一允许元件达到时限即锁存总命令及回路。并列时按时刻、段别 I/II/III、回路顺序消歧。电流/残流诊断仅推荐终端显示回路，不代替六回路判断；`--loop` 只用于显式限制允许发命令的回路，其他回路仍计算，32Q 不绕过。不读取事件名称或预设故障时刻决定保护动作。
 
-### 三段普通阻抗圆
+### 负序方向监督 32Q
 
-$$|Z_{\mathrm{meas}}|\leq |Z_{\mathrm{set}}^q|,\qquad q=\mathrm{I},\mathrm{II},\mathrm{III}$$
+相序约定为 ABC，CT 正方向假设为母线指向被保护线路，令 $a=e^{j2\pi/3}$：
+
+$$U_2=(U_A+a^2U_B+aU_C)/3,\qquad I_2=(I_A+a^2I_B+aI_C)/3$$
+
+$$q_2=\operatorname{Re}\{(U_2/I_2)e^{-j\arg Z_1}\}$$
+
+当 $|I_2|\geq\max(20\mathrm{A},0.10|I_1|)$ 且 $|U_2|\geq0.02U_N/\sqrt3$ 时，启用方向监督。固定死区 $d=0.10|Z_1|=6.875\ \Omega$：$q_2<-d$ 判正向，$q_2>d$ 判反向，中间为方向死区。反向及方向死区均闭锁距离元件，计时复归；负序量不足时不作 32Q 方向结论，距离元件仍使用自身 mho 判据。这些阈值是明确公开的教学定值，不随 Event 改变。
+
+方向依据是正向不平衡故障常有 $U_2=-Z_{S2}I_2$，反向常为正号，而不是仅凭测量阻抗的负电抗判反向。原始录波 1.10 s 附近，Event1 的 $q_2\approx-11.40\ \Omega$，Event2 的 $q_2\approx+91.81\ \Omega$。这支持当前极性约定下前者正向、后者反向；资料未给完整网络和 CT 接线，不能把这个条件性判断当作已证实的故障物理位置。
+
+标准原理参考：[SEL Advances in Series-Compensated Line Protection](https://selinc.com/WorkArea/DownloadAsset.aspx?id=3540)。没有通过翻转某个事件的极性、取电抗绝对值或扩大圆强制跳闸。
+
+### 三段正方向 mho 圆
+
+$$\left|Z_{\mathrm{meas}}-\frac{Z_{\mathrm{set}}^q}{2}\right|\leq\frac{|Z_{\mathrm{set}}^q|}{2},\qquad \operatorname{Re}\{Z_{\mathrm{meas}}(Z_{\mathrm{set}}^q)^*\}>0$$
+
+圆经过原点和整定点，圆心为整定向量的一半，半径为整定幅值的一半。没有取电抗绝对值、共轭测量阻抗或为不同事件反转方向。This implementation uses only forward self-polarized static mho circles; it never modifies recorded impedance signs to force a trip.
 
 | 段别 | 整定值 Ω | 圆半径 Ω | 附加延时 s |
 | --- | --- | ---: | ---: |
-| I | 1.701760 + j54.972000 | 54.998 | 0 |
-| II | 4.169624 + j108.504710 | 108.585 | 0.30 |
-| III | 4.253426 + j137.398529 | 137.464 | 1.00 |
+| I | 1.701760 + j54.972000 | 27.499 | 0 |
+| II | 4.169624 + j108.504710 | 54.292 | 0.30 |
+| III | 4.253426 + j137.398529 | 68.732 | 1.00 |
 
-I 段取本线路正序阻抗的 80%；II 段采用 $0.85[Z_1+1.00\times0.80Z_{1,\mathrm{adj}}]$；III 段按最低负荷阻抗躲避条件确定半径，假设最大负荷电流 1.50 kA，可靠系数 1.20、自启动系数 1.00、返回系数 1.05。III 段所存复数的相角取线路角，但普通圆判断只使用幅值。
+I 段取本线路正序阻抗的 80%；II 段采用 $0.85[Z_1+1.00\times0.80Z_{1,\mathrm{adj}}]$；III 段保留按最低负荷阻抗得到的 137.464 Ω 作为保守的整定向量长度（不是圆半径），假设最大负荷电流 1.50 kA，可靠系数 1.20、自启动系数 1.00、返回系数 1.05，相角取线路角。mho 圆的精确负荷边界还与负荷角有关，题目未明确最大负荷角，不擅自套用带余弦项后放大定值。
 
-三个元件并行运行。II、III 段在圆内连续计时，离区立即复归；首次跳闸时刻和段别锁存。回路电流不足 20 A 时不计算阻抗，三个距离元件不启动。零附加延时不代表故障发生瞬间即可识别，仍存在滑动窗测量时间。
+每个回路的三个元件并行运行。II、III 段在圆内且未被方向监督闭锁时连续计时，离区或闭锁立即复归；回路之间不共享计时器。首次总命令时刻、段别和回路锁存。回路电流不足 20 A 时该回路不计算阻抗、元件不启动。零附加延时仍存在滑动窗测量时间。
 
 整定参数集中在 `distance_relay.py` 顶部常量和 `build_settings()` 中；一次运行内保持固定。
 
@@ -199,12 +236,14 @@ I 段取本线路正序阻抗的 80%；II 段采用 $0.85[Z_1+1.00\times0.80Z_{1
 
 | 事件 | 默认回路与故障判断 | 跳闸段 | 跳闸命令 s | 理想断路器断开 s |
 | --- | --- | --- | ---: | ---: |
-| Event1 | AG，A 相接地 | I | 1.008535 | 1.058535 |
-| Event2 | BC，BC 相间短路 | I | 1.010202 | 1.060410 |
+| Event1 | 自动选 AG，A 相接地，32Q 正向 | I | 1.008952 | 1.058952 |
+| Event2 | 自动选 BC，BC 相间短路，32Q 反向 | 反向闭锁 | — | — |
 
 两组原始录波均约在 1.000 s 出现故障变化。故障后约 1.10 s 的原始录波中，AG 阻抗约为 $0.906+j15.781\ \Omega$，BC 阻抗约为 $8.740-j14.092\ \Omega$。这里引用的是原始录波测量值，不是已开断仿真在 1.10 s 的阻抗。
 
-断路器目标开断时刻为“命令时刻 + 延迟”，实际取不早于目标时刻的第一个采样点。Event2 约 0.208 ms 的额外差异来自离散采样。
+断路器目标开断时刻为“命令时刻 + 延迟”，实际取不早于目标时刻的第一个采样点。Event2 的实际轨迹没有进入三段正方向 mho 圆，且有效负序判据支持反向闭锁，因此不发跳闸命令、断路器不打开，投入后波形逐点等于原录波。原录波约 1.20 s 的恢复不是本继电器切除造成的。Both events run through the same automatic loop-selection and directional supervision. Event2 is reverse-blocked under the stated CT polarity assumption; it is not forced to trip. The simulated signals remain identical to its original record.
+
+终端主 CSV 记录显示回路，另输出 `relay_EventN_all_loops.csv`，每个完整窗口六行。仿真 Excel 包含原始、投入后波形及 AG/BG/CG/AB/BC/CA 六个独立回路工作表，记录时间、R/X、三段启动、II/III 计时、32Q 方向及投影。GIF 和报告六宫格展示六条实际回路。显示回路切换不影响独立计时。
 
 原始波形：
 
@@ -218,9 +257,9 @@ I 段取本线路正序阻抗的 80%；II 段采用 $0.85[Z_1+1.00\times0.80Z_{1
 
 ## 已知限制
 
-- 普通阻抗圆不具备方向选择性。Event2 电抗为负不被改为正值；在圆内动作并不能证明它是本线路正方向内部故障。
-- 事件回路按文件名预先选择；没有实现未知故障类型自动识别。
-- 两组事件均由 I 段动作，不能用它们证明 II、III 段延时动作、区外不误动和所有故障类型覆盖均已通过验证。
+- 实现自极化静态 mho 及负序方向监督，不包含记忆极化、串补电压反转处理、振荡闭锁等。32Q 的方向结论依赖相序、CT 正方向及常规负序网络假设；未给出的接线与系统结构仍须核实。若有证据证明 Event2 为正向区内故障，应重新检查模型，不能强制改成跳闸。
+- 六回路并行，但对称三相故障、演变性故障及复杂接地/相间复合故障未作完整工程验证。显示回路推荐只作诊断。没有将两个事件都跳闸当作测试通过条件。
+- Event1 由 I 段动作，Event2 不动作。两组录波不能证明 II、III 段延时动作、区外不误动和所有故障类型覆盖均已通过验证；附加单元测试只验证逻辑，不等于电网模型验证。
 - III 段近后备灵敏度约 1.9995，但在分支系数 1.00 的假设下远后备灵敏度约 0.9647，低于 1.2；当前整定不是已完成全部工程配合的定值。
 - 最大负荷 1.50 kA 是参考故障前录波采用的演示假设，不是已确认的系统最大运行负荷；II、III 段时限也未完成完整网络配合验证。
 - 断开后三相电流直接置零、电源侧电压按故障前基波外推。不模拟电弧、过零灭弧、重合闸、开断过电压或远端网络响应。

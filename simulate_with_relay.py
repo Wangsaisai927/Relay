@@ -19,6 +19,7 @@ import argparse
 import cmath
 import json
 import math
+import statistics
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -27,17 +28,17 @@ import distance_relay as relay
 from data import resolve_font_path
 
 
-def simulate(cfg_path: Path, delay: float, characteristic: str = 'impedance') -> dict:
+def simulate(cfg_path: Path, delay: float, characteristic: str = 'mho') -> dict:
     if not math.isfinite(delay) or delay < 0:
         raise ValueError('断路器延迟必须是非负有限数。')
-    if characteristic != 'impedance':
-        raise ValueError('此版本只采用普通阻抗圆。')
+    if characteristic != 'mho':
+        raise ValueError('此版本只采用正方向 mho 圆。')
     cfg = relay.parse_cfg(cfg_path)
     times, original = relay.read_dat(cfg_path.with_suffix('.dat'), cfg)
     if len(cfg.channels) != 6 or any(c.unit.strip().upper() != 'A' for c in cfg.channels[:3]):
         raise ValueError('需要本作业的 IA、IB、IC、UA、UB、UC 六通道录波。')
     event = 'Event1' if 'Event1' in cfg_path.stem else 'Event2'
-    loop = 'AG' if event == 'Event1' else 'BC'
+    loop = '自动'
     settings = relay.build_settings(characteristic)
     n = round(cfg.sample_rate_hz / cfg.frequency_hz)
     # 采用故障前最初一个周波估计各相电源侧电压；相位与时间原点一致。
@@ -45,7 +46,9 @@ def simulate(cfg_path: Path, delay: float, characteristic: str = 'impedance') ->
         relay.one_cycle_phasor([r[c] for r in original[:n]], times[:n], cfg.frequency_hz)
         for c in range(3, 6)
     ]
-    state = relay.RelayState()
+    bank = relay.RelayBank()
+    state = bank.state
+    all_loops = {name: [] for name in relay.LOOPS}
     modeled: list[list[float]] = []
     rows = []
     open_time = None
@@ -71,9 +74,15 @@ def simulate(cfg_path: Path, delay: float, characteristic: str = 'impedance') ->
                 relay.one_cycle_phasor([r[c] for r in modeled[first:k+1]], times[first:k+1], cfg.frequency_hz)
                 for c in range(6)
             ]
-            u, i = relay.select_loop_phasors(loop, phasors, settings.k0)
-            result = relay.update_relay(state, settings, t, times[k] - times[k-1], u, i)
+            loop, result, loop_results = bank.step(settings, t, times[k]-times[k-1], phasors)
+            for name, item in loop_results.items():
+                z = item.impedance
+                all_loops[name].append([t,None if z is None else z.real,None if z is None else z.imag,
+                                       item.in_zone1,item.in_zone2,item.in_zone3,item.zone2_timer_s,item.zone3_timer_s,
+                                       item.direction,item.z2_projection])
             # 零延时断路器也只在收到命令后才改变样本，不提前修改测量。
+        else:
+            for history in all_loops.values():history.append([t,None,None,False,False,False,0.,0.,'窗口未满',None])
         if opened:
             stage = '断路器已断开'
         elif state.trip_latched:
@@ -89,6 +98,8 @@ def simulate(cfg_path: Path, delay: float, characteristic: str = 'impedance') ->
             result.zone3_timer_s if result else 0.0,
             z.real if z is not None else None,
             z.imag if z is not None else None,
+            loop, result.direction if result else '窗口未满',
+            result.z2_projection if result else None,
         ])
     # 回归检查：断开前数据保持原样，断开后电流为零，不出现提前切除。
     for t, old, new in zip(times, original, modeled):
@@ -96,22 +107,34 @@ def simulate(cfg_path: Path, delay: float, characteristic: str = 'impedance') ->
             assert old == new
         else:
             assert new[:3] == [0.0, 0.0, 0.0]
-    if state.trip_time_s is not None:
-        assert state.trip_time_s >= 1.0, '出现故障前误动作，需要检查整定或算法。'
     if open_time is not None:
         assert open_time >= state.trip_time_s + delay - 1e-12
         assert open_time - (state.trip_time_s + delay) < 1.1 / cfg.sample_rate_hz
+    directions = [r[18] for r in rows if r[18] in ('正向', '反向')]
+    q_values = [r[19] for r in rows if r[19] is not None]
+    dominant_direction = max(set(directions), key=directions.count) if directions else '未判定'
+    fault_loops = [r[17] for r in rows if r[18] in ('正向', '反向')]
+    loop = bank.trip_loop or (max(set(fault_loops), key=fault_loops.count) if fault_loops else loop)
     return {
         'event': event, 'loop': loop, 'frequency': cfg.frequency_hz,
         'sample_rate': cfg.sample_rate_hz,
         'characteristic': characteristic, 'breaker_delay': delay,
         'trip_time': state.trip_time_s, 'trip_zone': state.trip_zone,
         'open_time': open_time, 'rows': rows,
+        'direction': dominant_direction,
+        'direction_projection_median': statistics.median(q_values) if q_values else None,
+        'direction_deadband': relay.DIRECTION_DEADBAND_OHM,
+        'all_loops': all_loops,
+        'trip_loop': bank.trip_loop,
         'raw_rows': [[k+1, round(t*1e6), t, *r] for k, (t, r) in enumerate(zip(times, original))],
         'headers': ['采样序号','时间戳(μs)','时间(s)','I_A(A)','I_B(A)','I_C(A)',
                     'U_AN(V)','U_BN(V)','U_CN(V)','跳闸命令(1为发出)','断路器闭合(1为闭合)',
-                    '设备状态','当前动作区','II段计时(s)','III段计时(s)','Z实部(Ω)','Z虚部(Ω)'],
+                    '设备状态','当前动作区','II段计时(s)','III段计时(s)','Z实部(Ω)','Z虚部(Ω)',
+                    '显示测量回路','32Q方向','负序方向投影(Ω)'],
         'zone_reaches': [abs(settings.zone1), abs(settings.zone2), abs(settings.zone3)],
+        'zone_vectors': [[z.real,z.imag] for z in [settings.zone1,settings.zone2,settings.zone3]],
+        'zone_centers': [[z.real/2,z.imag/2] for z in [settings.zone1,settings.zone2,settings.zone3]],
+        'zone_radii': [abs(z)/2 for z in [settings.zone1,settings.zone2,settings.zone3]],
     }
 
 
@@ -130,7 +153,7 @@ def plot_event(payload: dict, output: Path) -> None:
     trip_text = '未发出跳闸命令' if trip is None else f"{payload['trip_zone']}跳闸命令：{trip:.6f} s"
     open_text = '未断开' if opened is None else f'断路器断开：{opened:.6f} s'
     draw.text((70, 57), f"{trip_text}    {open_text}    断路器延迟={payload['breaker_delay']*1000:.0f} ms", fill='#333333', font=font)
-    draw.text((70, 89), '模型：断开后线路电流为零；电源侧电压按故障前基波外推；不模拟电弧、重合闸和网络暂态。', fill='#555555', font=small)
+    draw.text((70, 89), f"动作/诊断回路 {payload['loop']}；六回路独立并行；32Q {payload['direction']}。模型：开断后电流为零，电源侧电压外推。", fill='#555555', font=small)
     rows = payload['rows']
     start_time, end_time = rows[0][2], rows[-1][2]
     left, right = 140, 1540
@@ -191,7 +214,7 @@ def export_excel(payload: dict, output: Path) -> None:
     metadata = [
         ['项目', '本次计算结果'],
         ['测量回路', payload['loop']],
-        ['动作特性', '普通阻抗圆（无方向性）'],
+        ['动作特性', '正方向 mho 圆'],
         ['跳闸段别', payload['trip_zone']],
         ['跳闸命令时间(s)', payload['trip_time']],
         ['断路器延迟(s)', payload['breaker_delay']],
@@ -204,9 +227,9 @@ def export_excel(payload: dict, output: Path) -> None:
         '仿真假设', '断开前沿用原录波，断开后线路三相电流为零。',
         '电压测点为电源侧，断开后按故障前基波外推。',
         '不模拟电弧、重合闸、过电压和完整电网暂态。',
-        '动作不证明故障位于正方向。',
+        '未动作时不切除原始故障；原始录波仍可能自行恢复。',
         f"采样率 {payload['sample_rate']:.3f} Hz，基波 {payload['frequency']:.1f} Hz",
-        'I/II/III 半径(Ω)：' + '/'.join(f'{v:.3f}' for v in payload['zone_reaches']),
+        'I/II/III 半径(Ω)：' + '/'.join(f'{v:.3f}' for v in payload['zone_radii']),
     ]
     for row_index, note in enumerate(notes, 4):
         main.cell(row_index, 4, note)
@@ -218,10 +241,17 @@ def export_excel(payload: dict, output: Path) -> None:
     for row_index, values in enumerate([payload['headers'][:9], *payload['raw_rows']], 3):
         for col, value in enumerate(values, 1):
             raw.cell(row_index, col, value)
+    loop_sheets = []
+    for name, history in payload['all_loops'].items():
+        ws = wb.create_sheet(name+'回路')
+        ws.append(['时间(s)','R(Ω)','X(Ω)','I段启动','II段启动','III段启动',
+                   'II段计时(s)','III段计时(s)','32Q方向','负序方向投影(Ω)'])
+        for record in history:ws.append(record)
+        loop_sheets.append((ws,1,10))
     head_fill = PatternFill('solid', fgColor='243E60')
     stripe_fill = PatternFill('solid', fgColor='F2F5F8')
     thin = Side(style='thin', color='D9D9D9')
-    for ws, header_row, columns in [(main, 12, 17), (raw, 3, 9)]:
+    for ws, header_row, columns in [(main, 12, len(payload['headers'])), (raw, 3, 9), *loop_sheets]:
         ws.sheet_view.showGridLines = False
         ws.freeze_panes = f'A{header_row + 1}'
         ws.auto_filter.ref = f'A{header_row}:{get_column_letter(columns)}{ws.max_row}'
@@ -253,63 +283,58 @@ def export_excel(payload: dict, output: Path) -> None:
     wb.save(output)
 
 
-def plot_impedance_gif(payload: dict, output: Path, start: float = .98,
-                       end: float = 1.05, frame_count: int = 120) -> None:
-    """Two equal-scale R-X panels: overview and zoom; deliberately no text."""
-    points = [(r[2], complex(r[15], r[16])) for r in payload['rows']
-              if r[15] is not None and start <= r[2] <= end
-              and math.isfinite(r[15]) and math.isfinite(r[16])]
-    if len(points) < 2:
-        raise ValueError('GIF 时间窗内没有足够的有效阻抗点，请调整时间范围。')
-    bg = Image.new('RGB', (1100, 600), 'white')
-    event1 = payload['event'] == 'Event1'
-    limits = [((-180, 250), (-180, 180)), ((-35, 160), (-100, 100))] if event1 else [
-        ((-180, 530), (-490, 220)), ((-40, 155), (-165, 40))]
-    panels = []
-    colors = ['#2878b5', '#20a06b', '#343434']
-    for position, ((xmin, xmax), (ymin, ymax)) in enumerate(limits):
-        box = (35 + 550 * position, 35, 515 + 550 * position, 555)
-        scale = min((box[2]-box[0])/(xmax-xmin), (box[3]-box[1])/(ymax-ymin))
-        width = round((xmax-xmin)*scale)
-        height = round((ymax-ymin)*scale)
-        origin_x = box[0] + ((box[2]-box[0])-width)//2
-        origin_y = box[1] + ((box[3]-box[1])-height)//2
-        layer = Image.new('RGB', (width+1, height+1), 'white')
-        def xy(z, xmin=xmin, ymax=ymax, scale=scale):
-            return ((z.real-xmin)*scale, (ymax-z.imag)*scale)
-        draw = ImageDraw.Draw(layer)
-        step = 50 if position == 0 else 25
-        for val in range(math.ceil(xmin/step)*step, math.floor(xmax/step)*step+1, step):
-            x = xy(complex(val, 0))[0]
-            draw.line((x, 0, x, height), fill='#e6e9ed')
-        for val in range(math.ceil(ymin/step)*step, math.floor(ymax/step)*step+1, step):
-            y = xy(complex(0, val))[1]
-            draw.line((0, y, width, y), fill='#e6e9ed')
-        x, y = xy(0j)
-        draw.line((x, 0, x, height), fill='#8c96a0', width=2)
-        draw.line((0, y, width, y), fill='#8c96a0', width=2)
-        for radius, color in reversed(list(zip(payload['zone_reaches'], colors))):
-            a = xy(complex(-radius, radius)); b = xy(complex(radius, -radius))
-            draw.ellipse((*a, *b), outline=color, width=3)
-        draw.rectangle((0, 0, width, height), outline='#aab2ba')
-        panels.append((layer, (origin_x, origin_y), xy))
-    frames = []
-    for frame_index in range(frame_count):
-        k = round(frame_index*(len(points)-1)/(frame_count-1))
-        frame = bg.copy()
-        for base, origin, xy in panels:
-            layer = base.copy(); draw = ImageDraw.Draw(layer)
-            trail = [xy(z) for _, z in points[:k+1]]
-            if len(trail) > 1:
-                draw.line(trail, fill='#d43535', width=3)
-            x, y = trail[-1]
-            draw.ellipse((x-7, y-7, x+7, y+7), fill='#d43535', outline='white', width=2)
-            frame.paste(layer, origin)
-        frames.append(frame)
-    durations = [50]*len(frames)
-    durations[0] = 600; durations[-1] = 1600
-    frames[0].save(output, save_all=True, append_images=frames[1:],
-                   duration=durations, loop=0, optimize=True, disposal=2)
+def plot_impedance_gif(payload: dict, output: Path, start=.98, end=1.05, frame_count=120):
+    """Compatibility wrapper: six independent loops, never the old two-panel view."""
+    return plot_all_loops(payload, output, start, end, frame_count, True)
+
+
+def plot_all_loops(payload: dict, output: Path, start=.98, end=1.05, frame_count=120, animated=False):
+    """参考图式六宫格：同一定值、同一坐标比例，六条独立回路的实际轨迹。"""
+    width,height = (1200,800) if animated else (1800,1200)
+    base=Image.new('RGB',(width,height),'white');d=ImageDraw.Draw(base)
+    font=None if animated else ImageFont.truetype(str(resolve_font_path()),26)
+    small=None if animated else ImageFont.truetype(str(resolve_font_path()),20)
+    if not animated:
+        d.text((50,12),payload['event']+' 六测量回路三段方向阻抗圆及实际轨迹',fill='black',font=font)
+        d.text((50,height-42),'蓝色 I 段   红色 II 段   绿色 III 段   黑线：真实测量轨迹   时间窗 0.98–1.05 s',fill='black',font=small)
+    xmin,xmax,ymin,ymax=-130,280,-130,210
+    panels=[];colors=['#187fb5','#d4452d','#159765']
+    for pos,name in enumerate(relay.LOOPS):
+        col,row=pos%3,pos//3
+        bx=col*width/3;by=row*(height-80)/2+50
+        availw=width/3-105;availh=(height-100)/2-90
+        scale=min(availw/(xmax-xmin),availh/(ymax-ymin))
+        w,h=round((xmax-xmin)*scale),round((ymax-ymin)*scale)
+        left=round(bx+70+(availw-w)/2);top=round(by+30)
+        layer=Image.new('RGB',(w+1,h+1),'white');g=ImageDraw.Draw(layer)
+        def xy(z,scale=scale):return ((z.real-xmin)*scale,(ymax-z.imag)*scale)
+        for v in [-100,0,100,200]:
+            x,y=xy(complex(v,v));g.line((x,0,x,h),fill='#e0e0e0');g.line((0,y,w,y),fill='#e0e0e0')
+            if not animated:
+                d.text((left+x-18,top+h+5),str(v),font=small,fill='#333333')
+                d.text((left-48,top+y-12),str(v),font=small,fill='#333333')
+        g.rectangle((0,0,w,h),outline='#999999')
+        for center,radius,color in reversed(list(zip(payload['zone_centers'],payload['zone_radii'],colors))):
+            z=complex(*center);g.ellipse((*xy(z+complex(-radius,radius)),*xy(z+complex(radius,-radius))),outline=color,width=2 if animated else 3)
+        if not animated:
+            d.text((left+w/2-20,top-35),name,font=font,fill='black')
+            d.text((left+w/2-25,top+h+32),'R / Ω',font=small,fill='black')
+            d.text((left+3,top-25),'X / Ω',font=small,fill='black')
+        points=[(r[0],complex(r[1],r[2])) for r in payload['all_loops'][name] if r[1] is not None and start<=r[0]<=end
+                and (payload['open_time'] is None or r[0]<payload['open_time'])]
+        panels.append((layer,(left,top),xy,points))
+    def frame(t):
+        im=base.copy()
+        for layer,origin,xy,points in panels:
+            imlayer=layer.copy();g=ImageDraw.Draw(imlayer);trail=[xy(z) for ti,z in points if ti<=t]
+            if len(trail)>1:g.line(trail,fill='black',width=2)
+            if trail:
+                x,y=trail[-1];g.ellipse((x-3,y-3,x+3,y+3),fill='black')
+            im.paste(imlayer,origin)
+        return im
+    if not animated:frame(end).save(output);return
+    frames=[frame(start+(end-start)*k/(frame_count-1)) for k in range(frame_count)]
+    frames[0].save(output,save_all=True,append_images=frames[1:],duration=[600]+[50]*(frame_count-2)+[1600],loop=0,disposal=2,optimize=True)
 
 
 def main() -> None:
@@ -338,8 +363,9 @@ def main() -> None:
         if not args.gif_only:
             plot_event(item,args.output_dir/f'{event}_with_relay_waveforms.png')
             export_excel(item,args.output_dir/f'{event}_with_relay_data.xlsx')
-        plot_impedance_gif(item,args.output_dir/f'{event}_RX_trajectory.gif',args.gif_start,args.gif_end,args.gif_frames)
-        summaries.append({key:item[key] for key in ['event','loop','trip_time','trip_zone','open_time','breaker_delay','zone_reaches']})
+            plot_all_loops(item,args.output_dir/f'{event}_RX_all_loops.png',args.gif_start,args.gif_end)
+        plot_all_loops(item,args.output_dir/f'{event}_RX_trajectory.gif',args.gif_start,args.gif_end,args.gif_frames,True)
+        summaries.append({key:item[key] for key in ['event','loop','characteristic','trip_time','trip_zone','open_time','breaker_delay','zone_reaches','zone_vectors','zone_centers','zone_radii','direction','direction_projection_median','direction_deadband','trip_loop']})
         print(f"{event}: 跳闸={item['trip_time']} s，断开={item['open_time']} s",flush=True)
     (args.output_dir/'summary.json').write_text(json.dumps(summaries,ensure_ascii=False,indent=2),encoding='utf-8')
     print(f'已生成仿真结果：{args.output_dir.resolve()}')

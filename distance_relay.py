@@ -14,10 +14,10 @@ r"""EE271 三段数字距离保护继电器终端仿真。
 
 说明：
 1. 三段整定值在程序启动时计算一次，运行中保持不变。
-2. Event1 使用带零序补偿的 AG 测量回路。
-3. Event2 使用 BC 相间测量回路。
-4. 使用普通阻抗圆，与课程报告采用的动作特性一致。
-   普通阻抗圆自身没有方向选择性，不能据此确认故障的物理方向。
+2. AG/BG/CG/AB/BC/CA 六回路并行运行，各自独立计时，不按文件名预设故障。
+3. 32Q 负序方向监督：有效反向量闭锁，方向死区也闭锁。
+4. 只使用正方向 mho 圆，圆心 Zset/2、半径 |Zset|/2。
+   保留原始相量符号；不因某事件未动作而旋转或取绝对值。
 5. 运行结果同时保存到 outputs/relay/relay_EventN_results.csv。
 """
 
@@ -68,6 +68,12 @@ ZONE3_DELAY_S = 1.00
 # 电流过小时不计算阻抗，避免除以接近零的数
 MIN_LOOP_CURRENT_A = 20.0
 
+# 32Q 负序方向监督：统一用于所有录波，不按事件名称改变方向。
+NEGATIVE_CURRENT_RATIO = 0.10
+NEGATIVE_VOLTAGE_RATIO = 0.02
+DIRECTION_DEADBAND_OHM = 0.10 * abs(Z1_LINE)
+LOOPS = ('AG', 'BG', 'CG', 'AB', 'BC', 'CA')
+
 
 @dataclass
 class Channel:
@@ -96,7 +102,7 @@ class RelaySettings:
     zone3_delay_s: float
     k0: complex
     z_load_min: float
-    characteristic: str = "impedance"
+    characteristic: str = "mho"
 
 
 @dataclass
@@ -106,6 +112,8 @@ class RelayState:
     trip_latched: bool = False
     trip_zone: str = "—"
     trip_time_s: float | None = None
+    measurement_loop: str | None = None
+    fault_direction: str = '未判定'
 
 
 @dataclass
@@ -121,6 +129,76 @@ class StepResult:
     zone2_timer_s: float
     zone3_timer_s: float
     output: str
+    direction: str = '负序量不足'
+    z2_projection: float | None = None
+
+
+@dataclass
+class DirectionDecision:
+    label: str
+    projection: float | None
+    supervised: bool
+    loop: str
+
+
+def analyze_phasors(phasors: list[complex], forced_loop: str | None = None) -> DirectionDecision:
+    """自动选回路和 32Q 方向监督；CT 正方向假设为母线指向被保护线路。
+
+    正向故障负序网络满足 U2=-Zsource,2 I2；反向故障通常为正号。
+    只有负序电压、电流均足够时启用监督；死区内闭锁，不猜方向。
+    三相对称故障负序不足时仍由原有 mho 元件判断，不能宣称 32Q 覆盖。
+    """
+    ia, ib, ic, ua, ub, uc = phasors
+    a = cmath.exp(2j * math.pi / 3)
+    i1 = (ia + a * ib + a*a * ic) / 3
+    i2 = (ia + a*a * ib + a * ic) / 3
+    u2 = (ua + a*a * ub + a * uc) / 3
+    residual = abs(ia + ib + ic)
+    if residual > max(3 * MIN_LOOP_CURRENT_A, 1.5 * abs(i2)):
+        loop = ['AG', 'BG', 'CG'][max(range(3), key=lambda k: abs(phasors[k]))]
+    else:
+        loop = max([('AB', abs(ia-ib)), ('BC', abs(ib-ic)), ('CA', abs(ic-ia))], key=lambda p: p[1])[0]
+    if forced_loop:
+        loop = forced_loop
+    active = (abs(i2) >= max(MIN_LOOP_CURRENT_A, NEGATIVE_CURRENT_RATIO * abs(i1))
+              and abs(u2) >= NEGATIVE_VOLTAGE_RATIO * RATED_LINE_VOLTAGE_V / math.sqrt(3))
+    if not active:
+        return DirectionDecision('负序量不足', None, False, loop)
+    q = ((u2 / i2) * cmath.exp(-1j * cmath.phase(Z1_LINE))).real
+    label = '正向' if q < -DIRECTION_DEADBAND_OHM else '反向' if q > DIRECTION_DEADBAND_OHM else '方向死区'
+    return DirectionDecision(label, q, True, loop)
+
+
+class RelayBank:
+    """六回路各自计算三段并行计时，任一允许回路首次动作即锁存总命令。"""
+    def __init__(self):
+        self.states = {name: RelayState() for name in LOOPS}
+        self.state = RelayState()
+        self.trip_loop = None
+
+    def step(self, settings, time_s, dt_s, phasors, forced_loop=None):
+        direction = analyze_phasors(phasors, forced_loop)
+        results = {}
+        for name in LOOPS:
+            u, i = select_loop_phasors(name, phasors, settings.k0)
+            decision = DirectionDecision(direction.label, direction.projection, direction.supervised, name)
+            results[name] = update_relay(self.states[name], settings, time_s, dt_s, u, i, decision)
+        eligible = [forced_loop] if forced_loop else LOOPS
+        if not self.state.trip_latched:
+            trips = [name for name in eligible if self.states[name].trip_latched]
+            if trips:
+                # 同一采样点并列时优先 I、II、III 段，再按公开回路顺序消歧。
+                name = min(trips, key=lambda n: (self.states[n].trip_time_s,
+                           ('Ⅰ段','Ⅱ段','Ⅲ段').index(self.states[n].trip_zone), LOOPS.index(n)))
+                st = self.states[name]
+                self.state.trip_latched = True
+                self.state.trip_time_s = st.trip_time_s
+                self.state.trip_zone = st.trip_zone
+                self.trip_loop = name
+        selected = self.trip_loop or direction.loop
+        self.state.fault_direction = direction.label
+        chosen = results[selected]
+        return selected, chosen, results
 
 
 def _read_cfg_text(path: Path) -> str:
@@ -225,7 +303,9 @@ def read_dat(path: Path, cfg: ComtradeConfig) -> tuple[list[float], list[list[fl
     return times, values
 
 
-def build_settings(characteristic: str = "impedance") -> RelaySettings:
+def build_settings(characteristic: str = "mho") -> RelaySettings:
+    if characteristic != "mho":
+        raise ValueError("仅支持正方向 mho 圆。")
     zone1 = ZONE1_REACH_RATIO * Z1_LINE
     adjacent_zone1 = ADJACENT_ZONE1_RATIO * Z1_ADJACENT
     zone2 = K_REL_ZONE2 * (Z1_LINE + K_BRANCH_MIN * adjacent_zone1)
@@ -265,15 +345,16 @@ def one_cycle_phasor(
 
 def zone_pickup(measured: complex | None, reach: complex, characteristic: str) -> bool:
     """根据明确选择的动作特性判断，而不修改录波或测量阻抗符号。"""
-    if characteristic != "impedance":
+    if characteristic != "mho":
         raise ValueError(f"未知动作特性：{characteristic}")
     if measured is None or not (
         math.isfinite(measured.real) and math.isfinite(measured.imag)
     ):
         return False
-    # 普通阻抗继电器：以原点为圆心，整定阻抗幅值为半径。
-    # 这种特性对反向小阻抗也会启动；工程应用须另加方向元件。
-    return abs(measured) <= abs(reach)
+    # 正方向自极化静态 mho 圆：经过原点和整定点，直径为整定向量。
+    # 显式检查正向投影，避免原点或数值容差被误当作有效方向证据。
+    projection = (measured * reach.conjugate()).real
+    return projection > 0.0 and abs(measured - reach / 2.0) <= abs(reach) / 2.0 + 1e-9
 
 
 def select_loop_phasors(
@@ -302,17 +383,26 @@ def update_relay(
     dt_s: float,
     voltage: complex,
     current: complex,
+    direction: DirectionDecision | None = None,
 ) -> StepResult:
+    if direction is not None and state.measurement_loop != direction.loop:
+        state.zone2_timer_s = state.zone3_timer_s = 0.0
+        state.measurement_loop = direction.loop
     impedance = voltage / current if abs(current) >= MIN_LOOP_CURRENT_A else None
     in_zone1 = zone_pickup(impedance, settings.zone1, settings.characteristic)
     in_zone2 = zone_pickup(impedance, settings.zone2, settings.characteristic)
     in_zone3 = zone_pickup(impedance, settings.zone3, settings.characteristic)
+    blocked = direction is not None and direction.supervised and direction.label != '正向'
+    if blocked:
+        in_zone1 = in_zone2 = in_zone3 = False
 
     # 三个距离元件并行工作，因此故障落入 I 段时，II、III 段元件也会启动计时。
     state.zone2_timer_s = state.zone2_timer_s + dt_s if in_zone2 else 0.0
     state.zone3_timer_s = state.zone3_timer_s + dt_s if in_zone3 else 0.0
 
-    if in_zone1:
+    if blocked:
+        region = direction.label + '闭锁'
+    elif in_zone1:
         region = "Ⅰ段动作区"
     elif in_zone2:
         region = "Ⅱ段动作区"
@@ -351,6 +441,8 @@ def update_relay(
         zone2_timer_s=state.zone2_timer_s,
         zone3_timer_s=state.zone3_timer_s,
         output=output,
+        direction=direction.label if direction else '未启用监督',
+        z2_projection=direction.projection if direction else None,
     )
 
 
@@ -386,6 +478,7 @@ def render_dashboard(
     sys.stdout.write(f"测量阻抗 Z       : {_impedance_text(result.impedance)}\n")
     sys.stdout.write("-" * 72 + "\n")
     sys.stdout.write(f"当前判断         : {result.region}\n")
+    sys.stdout.write(f"32Q 方向         : {result.direction}；投影={result.z2_projection} Ω\n")
     sys.stdout.write(
         f"I 段元件         : {'启动（瞬时）' if result.in_zone1 else '未启动'}\n"
     )
@@ -405,6 +498,7 @@ def render_dashboard(
 
 
 def render_scroll(event_name: str, loop_name: str, result: StepResult) -> None:
+    q_text = '—' if result.z2_projection is None else f'{result.z2_projection:+.2f}Ω'
     z_text = (
         f"{result.impedance.real:+.2f}{result.impedance.imag:+.2f}j Ω"
         if result.impedance is not None
@@ -415,6 +509,7 @@ def render_scroll(event_name: str, loop_name: str, result: StepResult) -> None:
         f"U={abs(result.voltage)/1000:7.2f}∠{math.degrees(cmath.phase(result.voltage)):+6.1f}°kV  "
         f"I={abs(result.current)/1000:6.3f}∠{math.degrees(cmath.phase(result.current)):+6.1f}°kA  "
         f"Z={z_text:>22}  判断={result.region:<7}  "
+        f"方向={result.direction} q2={q_text}  "
         f"tII={result.zone2_timer_s:6.3f}s  "
         f"tIII={result.zone3_timer_s:6.3f}s  输出={result.output}",
         flush=True,
@@ -440,6 +535,7 @@ def save_results(path: Path, rows: list[list[object]]) -> None:
                 "II段计时(s)",
                 "III段计时(s)",
                 "跳闸输出",
+                "32Q方向", "负序方向投影(Ω)",
             ]
         )
         writer.writerows(rows)
@@ -464,11 +560,15 @@ def simulate_event(
     event_match = re.search(r"Event(\d+)", cfg_path.stem, re.IGNORECASE)
     event_number = event_match.group(1) if event_match else "?"
     event_name = f"Event{event_number}"
-    loop_name = forced_loop or ("AG" if event_number == "1" else "BC")
+    loop_name = forced_loop or '自动'
     window_size = max(4, round(cfg.sample_rate_hz / cfg.frequency_hz))
-    state = RelayState()
+    bank = RelayBank()
+    state = bank.state
     rows: list[list[object]] = []
+    all_rows: list[list[object]] = []
     last_display_time = -math.inf
+    fault_loops: list[str] = []
+    fault_directions: list[str] = []
 
     for index in range(window_size - 1, len(values)):
         start = index - window_size + 1
@@ -481,16 +581,18 @@ def simulate_event(
             )
             for channel_index in range(6)
         ]
-        voltage, current = select_loop_phasors(loop_name, phasors, settings.k0)
-        dt_s = times[index] - times[index - 1] if index else 1.0 / cfg.sample_rate_hz
-        result = update_relay(
-            state=state,
-            settings=settings,
-            time_s=times[index],
-            dt_s=max(dt_s, 0.0),
-            voltage=voltage,
-            current=current,
-        )
+        loop_name, result, loop_results = bank.step(settings, times[index], max(times[index]-times[index-1],0), phasors, forced_loop)
+        direction = analyze_phasors(phasors, forced_loop)
+        if direction.label in ('正向', '反向'):
+            fault_loops.append(loop_name)
+            fault_directions.append(direction.label)
+        voltage, current = result.voltage, result.current
+        for name, item in loop_results.items():
+            iz = item.impedance
+            all_rows.append([item.time_s,name,item.voltage.real,item.voltage.imag,item.current.real,item.current.imag,
+                             None if iz is None else iz.real,None if iz is None else iz.imag,
+                             None if iz is None else abs(iz),item.region,item.zone2_timer_s,item.zone3_timer_s,
+                             item.output,item.direction,item.z2_projection])
         z = result.impedance
         rows.append(
             [
@@ -507,6 +609,8 @@ def simulate_event(
                 f"{result.zone2_timer_s:.6f}",
                 f"{result.zone3_timer_s:.6f}",
                 result.output,
+                result.direction,
+                '' if result.z2_projection is None else f'{result.z2_projection:.6f}',
             ]
         )
 
@@ -526,6 +630,10 @@ def simulate_event(
 
     result_path = output_dir / f"relay_{event_name}_results.csv"
     save_results(result_path, rows)
+    save_results(output_dir / f'relay_{event_name}_all_loops.csv', all_rows)
+    if fault_loops:
+        loop_name = bank.trip_loop or max(set(fault_loops), key=fault_loops.count)
+        state.fault_direction = max(set(fault_directions), key=fault_directions.count)
     return event_name, loop_name, state, result_path
 
 
@@ -537,8 +645,8 @@ def print_settings(settings: RelaySettings) -> None:
         )
 
     print("本次仿真采用的固定整定值")
-    if settings.characteristic == "impedance":
-        print("动作特性：普通阻抗圆 |Z| ≤ |Zset|（不带方向判别）")
+    print("动作特性：正方向 mho 圆 |Z-Zset/2| ≤ |Zset|/2，且 Re(Z·conj(Zset)) > 0")
+    print(f"32Q 方向监督：死区 ±{DIRECTION_DEADBAND_OHM:.3f} Ω；反向闭锁，不改动原始 R、X。")
     print("=" * 72)
     line("I 段", settings.zone1)
     line("II 段", settings.zone2)
@@ -581,7 +689,7 @@ def main() -> None:
     parser.add_argument(
         "--loop",
         choices=("AG", "BG", "CG", "AB", "BC", "CA"),
-        help="手动指定测量回路；默认 Event1=AG、Event2=BC",
+        help="手动指定测量回路；默认根据三相相量自动选择，方向判断仍启用",
     )
     parser.add_argument(
         "--speed",
@@ -599,8 +707,8 @@ def main() -> None:
     parser.add_argument("--single-window", action="store_true", help="在当前终端依次处理两个事件，便于日志检查")
     parser.add_argument("--keep-open", action="store_true", help="结束后等待回车，保留窗口")
     parser.add_argument(
-        "--characteristic", choices=("impedance",), default="impedance",
-        help="动作特性：impedance 普通阻抗圆（无方向性）",
+        "--characteristic", choices=("mho",), default="mho",
+        help="动作特性：mho 正方向阻抗圆（唯一支持的特性）",
     )
     parser.add_argument("--no-live", action="store_true", help="不实时显示，只计算并输出汇总")
     parser.add_argument("--repeat", action="store_true", help="循环回放，按 Ctrl+C 停止")
@@ -686,7 +794,7 @@ def main() -> None:
         if state.trip_latched and state.trip_time_s is not None:
             result = f"{state.trip_zone}动作，跳闸时刻 {state.trip_time_s:.6f} s"
         else:
-            result = "未动作"
+            result = f"{state.fault_direction}闭锁，未动作" if state.fault_direction == '反向' else "未动作"
         print(f"{event_name} / {loop_name}: {result}")
         print(f"  逐点结果：{result_path}")
     if args.keep_open:
