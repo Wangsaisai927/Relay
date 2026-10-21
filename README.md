@@ -202,12 +202,18 @@ AG、BG、CG、AB、BC、CA 六回路每个采样点全部计算。`RelayBank` �
 
 ### 负序方向监督 32Q
 
+32Q 是“负序方向元件”的常用标识，不是距离保护的第 32 段，也不是零序补偿系数。这里的 Q 表示负序量；它利用负序电压与负序电流的关系，辅助判断不平衡故障在保护的正方向还是反方向。
+
+可以把两类判断分开理解：距离元件用测量阻抗判断“是否进入某段保护范围”，32Q 判断“故障方向是否允许动作”。本程序中，反向或方向死区会闭锁距离元件；正向只表示允许继续判断，并不直接发出跳闸命令，仍须满足入圆和延时条件。负序量太小时，不作 32Q 方向结论，继续采用 mho 元件自身的判据。方向 mho 元件并非必须额外配置 32Q；这里是当前程序采用的辅助监督逻辑。
+
+零序补偿与它不是一回事：零序补偿修正接地回路的测量阻抗，32Q 利用负序量判方向。单相接地和两相短路通常均有负序量，所以两个算例都可以使用 32Q；理想对称三相故障没有负序量，不能依靠它判断方向。参见 [SEL 关于距离元件与负序方向监督的说明](https://cms-cdn.selinc.com/assets/Literature/Publications/Technical%20Papers/7008_DistanceElementsUnconventional_BK_20220318_Web2.pdf?v=20220509-224610)。
+
 相序约定为 ABC，CT 正方向假设为母线指向被保护线路，令 $a=e^{j2\pi/3}$：
 
 $$U_2=(U_A+a^2U_B+aU_C)/3,\qquad I_2=(I_A+a^2I_B+aI_C)/3$$
 
 $$
-q_2=\mathrm{Re}\left\{\frac{U_2}{I_2}e^{-j\angle Z_1}\right\}
+q_2=\mathrm{Re}((U_2/I_2)e^{-j\theta_1}),\qquad \theta_1=\angle Z_1
 $$
 
 当 $|I_2|\geq\max(20\mathrm{A},0.10|I_1|)$ 且 $|U_2|\geq0.02U_N/\sqrt3$ 时，启用方向监督。固定死区 $d=0.10|Z_1|=6.875\ \Omega$：$q_2 < -d$ 判正向，$q_2 > d$ 判反向，中间为方向死区。反向及方向死区均闭锁距离元件，计时复归；负序量不足时不作 32Q 方向结论，距离元件仍使用自身 mho 判据。这些阈值是明确公开的教学定值，不随 Event 改变。
@@ -223,7 +229,7 @@ $$
 $$
 
 $$
-\mathrm{Re}\left\{Z_{\mathrm{meas}}(Z_{\mathrm{set}}^q)^*\right\}>0
+\mathrm{Re}(Z_{\mathrm{meas}}(Z_{\mathrm{set}}^q)^*)>0
 $$
 
 圆经过原点和整定点，圆心为整定向量的一半，半径为整定幅值的一半。没有取电抗绝对值、共轭测量阻抗或为不同事件反转方向。This implementation uses only forward self-polarized static mho circles; it never modifies recorded impedance signs to force a trip.
