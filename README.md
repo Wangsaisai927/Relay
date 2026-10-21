@@ -206,9 +206,11 @@ AG、BG、CG、AB、BC、CA 六回路每个采样点全部计算。`RelayBank` �
 
 $$U_2=(U_A+a^2U_B+aU_C)/3,\qquad I_2=(I_A+a^2I_B+aI_C)/3$$
 
-$$q_2=\operatorname{Re}\{(U_2/I_2)e^{-j\arg Z_1}\}$$
+$$
+q_2=\mathrm{Re}\left\{\frac{U_2}{I_2}e^{-j\angle Z_1}\right\}
+$$
 
-当 $|I_2|\geq\max(20\mathrm{A},0.10|I_1|)$ 且 $|U_2|\geq0.02U_N/\sqrt3$ 时，启用方向监督。固定死区 $d=0.10|Z_1|=6.875\ \Omega$：$q_2<-d$ 判正向，$q_2>d$ 判反向，中间为方向死区。反向及方向死区均闭锁距离元件，计时复归；负序量不足时不作 32Q 方向结论，距离元件仍使用自身 mho 判据。这些阈值是明确公开的教学定值，不随 Event 改变。
+当 $|I_2|\geq\max(20\mathrm{A},0.10|I_1|)$ 且 $|U_2|\geq0.02U_N/\sqrt3$ 时，启用方向监督。固定死区 $d=0.10|Z_1|=6.875\ \Omega$：$q_2 < -d$ 判正向，$q_2 > d$ 判反向，中间为方向死区。反向及方向死区均闭锁距离元件，计时复归；负序量不足时不作 32Q 方向结论，距离元件仍使用自身 mho 判据。这些阈值是明确公开的教学定值，不随 Event 改变。
 
 方向依据是正向不平衡故障常有 $U_2=-Z_{S2}I_2$，反向常为正号，而不是仅凭测量阻抗的负电抗判反向。原始录波 1.10 s 附近，Event1 的 $q_2\approx-11.40\ \Omega$，Event2 的 $q_2\approx+91.81\ \Omega$。这支持当前极性约定下前者正向、后者反向；资料未给完整网络和 CT 接线，不能把这个条件性判断当作已证实的故障物理位置。
 
@@ -216,7 +218,13 @@ $$q_2=\operatorname{Re}\{(U_2/I_2)e^{-j\arg Z_1}\}$$
 
 ### 三段正方向 mho 圆
 
-$$\left|Z_{\mathrm{meas}}-\frac{Z_{\mathrm{set}}^q}{2}\right|\leq\frac{|Z_{\mathrm{set}}^q|}{2},\qquad \operatorname{Re}\{Z_{\mathrm{meas}}(Z_{\mathrm{set}}^q)^*\}>0$$
+$$
+\left|Z_{\mathrm{meas}}-\frac{Z_{\mathrm{set}}^q}{2}\right|\leq\frac{|Z_{\mathrm{set}}^q|}{2}
+$$
+
+$$
+\mathrm{Re}\left\{Z_{\mathrm{meas}}(Z_{\mathrm{set}}^q)^*\right\}>0
+$$
 
 圆经过原点和整定点，圆心为整定向量的一半，半径为整定幅值的一半。没有取电抗绝对值、共轭测量阻抗或为不同事件反转方向。This implementation uses only forward self-polarized static mho circles; it never modifies recorded impedance signs to force a trip.
 
